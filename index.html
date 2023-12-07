@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/video.js/7.11.7/video-js.min.css" rel="stylesheet" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/video.js/7.11.7/video.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/videojs-contrib-eme@3.8.0/dist/videojs-contrib-eme.js"></script>
+    <title>Test VideJS DRM</title>
+    <style>
+        .child-element {
+            position: absolute;
+            height: 100%;
+        }
+
+        .chapter-timeline {
+            position: relative;
+            height: 100%;
+            width: 100%;
+            display: flex;
+            gap: 2px;
+        }
+
+        .chapter {
+            position: relative;
+        }
+
+        .chapter-placeholder {
+            width: 100%;
+            background-color: rgba(115, 133, 159, .5);
+            z-index: 0;
+        }
+
+        .chapter-loaded {
+            background-color: rgba(115, 133, 159, .75);
+        }
+
+        .chapter-played {
+            background-color: rgb(255, 255, 255);
+        }
+
+        .chapter-1 {
+            left: 0;
+        }
+
+        .video-js .vjs-slider {
+            background-color: transparent !important;
+        }
+
+        .video-js .vjs-load-progress {
+            display: none !important;
+        }
+
+        .vjs-play-progress {
+            background-color: transparent !important;
+        }
+
+        .chapter-section {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            margin-bottom: 1rem;
+            width: 10rem;
+        }
+    </style>
+</head>
+
+<body>
+    <div style="margin: 50px auto;">
+        <div class="chapter-section"></div>
+        <video id="my-video" class="video-js"></video>
+    </div>
+    <script>
+
+        //This is the metadata for the chapters in seconds
+        const chapterMetaData = [
+            { from: 0, to: 50, chapterName: 'Chapter 1' },
+            { from: 50, to: 100, chapterName: 'Chapter 2' },
+            { from: 100, to: 150, chapterName: 'Chapter 3' },
+            { from: 150, to: 210, chapterName: 'Chapter 4' },
+        ];
+
+        //This function is used to move to a specific chapter based on index
+        function moveToChapter(chatperIndex) {
+            const { from } = chapterMetaData[chatperIndex - 1];
+            player.play();
+            player.currentTime(from);
+        }
+
+        var player = videojs(
+            'my-video',
+            {
+                controls: true,
+                fluid: true,
+                html5: {
+                    vhs: {
+                        overrideNative: true
+                    }
+                }
+            },
+            function () {
+                var player = this;
+                player.eme();
+                player.src({
+                    src: 'https://cdn.bitmovin.com/content/assets/art-of-motion_drm/mpds/11331.mpd',
+                    type: 'application/dash+xml',
+                    keySystems: {
+                        'com.widevine.alpha': 'https://cwip-shaka-proxy.appspot.com/no_auth',
+                    }
+                });
+
+
+                player.ready(function () {
+
+                    player.tech(true).on('keystatuschange', function (event) {
+                        console.log("event: ", event);
+
+                    });
+
+                });
+
+                player.on('labelchange', function (event) {
+                    console.log("event: ", event);
+                });
+
+                player.on('loadedmetadata', () => {
+                    chapterMaker();
+                });
+
+                player.on('timeupdate', () => {
+                    calculateBothChatperLoadedAndPlayPercentage();
+
+                });
+            }
+
+        );
+
+        const timeStringToSeconds = (timeString) => {
+            const timeComponents = timeString.split(':').map(Number);
+            if (timeComponents.length === 2) {
+                const [minutes, seconds] = timeComponents;
+                return minutes * 60 + seconds;
+            } else if (timeComponents.length === 3) {
+                const [hours, minutes, seconds] = timeComponents;
+                return hours * 3600 + minutes * 60 + seconds;
+            } else {
+                return 0;
+            }
+        };
+
+        player.getDescendant([
+            'controlBar',
+            'progressControl',
+            'seekBar',
+            'mouseTimeDisplay',
+            'timeTooltip',
+        ]).update = function (seekBarRect, seekBarPoint, time) {
+            const currentChapter = getCurrentChapter(timeStringToSeconds(time));
+            this.write(`${time} ${currentChapter?.chapterName}`)
+            this.el_.style.width = `fit-content`;
+            this.el_.style['white-space'] = `nowrap`;
+        }
+
+        function getCurrentChapter(currentTime = player.currentTime()) {
+            const currentChapter = chapterMetaData.find((breakPoint) => {
+                const { from, to } = breakPoint;
+                return currentTime >= from && currentTime <= to;
+            });
+            return currentChapter;
+        }
+
+        function calculateBothChatperLoadedAndPlayPercentage() {
+            const currentTime = player.currentTime();
+            const buffered = player.buffered();
+            const videoDuration = player.duration();
+
+            if (buffered.length > 0) {
+                const loadedSeconds = buffered.end(buffered.length - 1);
+
+                chapterMetaData.forEach((breakPoint, index) => {
+                    const { from, to } = breakPoint;
+
+                    // Calculate loaded percentage for each section
+                    const chatperDuration = to - from;
+                    const loadedInChapter = Math.min(loadedSeconds, to) - from;
+                    const loadedPercentage = Math.max((loadedInChapter / chatperDuration) * 100, 0);
+
+                    // Update the width chapter loader div
+                    const chatperLoader = document.querySelector(`.chapter-loaded-${index + 1}`);
+                    chatperLoader.style.width = `${loadedPercentage}%`;
+
+                    // Calculate played percentage for each chatper
+                    const playedInChapter = Math.min(currentTime, to) - from;
+                    const playedPercentage = Math.max((playedInChapter / chatperDuration) * 100, 0);
+
+                    // Update the width chapter played div
+                    const chatperPlayed = document.querySelector(`.chapter-played-${index + 1}`);
+                    chatperPlayed.style.width = `${playedPercentage}%`;
+                });
+            }
+        }
+
+        function chapterMaker() {
+            const duration = player.duration();
+            const chapterTimeline = document.createElement('div');
+            chapterTimeline.className = 'chapter-timeline';
+
+            const progressBar = document.querySelector('.vjs-progress-holder.vjs-slider.vjs-slider-horizontal');
+
+            progressBar.appendChild(chapterTimeline);
+
+            chapterMetaData.forEach((breakPoint, index) => {
+
+                const chapterContainer = document.createElement('div');
+                chapterContainer.className = `chapter chapter-${index + 1}`;
+                chapterContainer.style.width = `${(breakPoint.to - breakPoint.from) / duration * 100}%`;
+
+                const chapterContainerPlaceholder = document.createElement('div');
+                chapterContainerPlaceholder.className = `child-element chapter-placeholder chapter-placeholder-${index + 1}`;
+                chapterContainer.appendChild(chapterContainerPlaceholder);
+
+                const chapterContainerLoaded = document.createElement('div');
+                chapterContainerLoaded.className = `child-element chapter-loaded chapter-loaded-${index + 1}`;
+                chapterContainer.appendChild(chapterContainerLoaded);
+
+                const chapterContainerPlayed = document.createElement('div');
+                chapterContainerPlayed.className = `child-element chapter-played chapter-played-${index + 1}`;
+                chapterContainer.appendChild(chapterContainerPlayed);
+
+                chapterContainer.className = `chapter chapter-${index + 1}`;
+                chapterTimeline.appendChild(chapterContainer);
+            });
+        }
+
+        function formatTime(time) {
+            const hours = Math.floor(time / 3600);
+            const minutes = Math.floor((time % 3600) / 60);
+            const seconds = Math.floor(time % 60);
+
+            const formattedMinutes = minutes < 10 ? `0${minutes}` : `${minutes}`;
+            const formattedSeconds = seconds < 10 ? `0${seconds}` : `${seconds}`;
+            
+            return hours > 0 ? `${hours}:${formattedMinutes}:${formattedSeconds}` : `${formattedMinutes}:${formattedSeconds}`;
+        }
+
+
+        function addChapterLinksWithFromAndMoveToChapter() {
+            const chapterSection = document.querySelector('.chapter-section');
+            chapterMetaData.forEach((breakPoint, index) => {
+                const { from, chapterName } = breakPoint;
+                const chapterLink = document.createElement('a');
+                chapterLink.href = `#${index + 1}`;
+                chapterLink.innerText = `${formatTime(from)} - ${chapterName}`;
+                chapterLink.addEventListener('click', (event) => {
+                    event.preventDefault();
+                    moveToChapter(index + 1);
+                });
+                chapterSection.appendChild(chapterLink);
+            });
+        }
+
+        addChapterLinksWithFromAndMoveToChapter();
+
+    </script>
+</body>
+
+</html>
